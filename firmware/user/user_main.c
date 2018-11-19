@@ -27,7 +27,7 @@
 #define procTaskQueueLen    1
 os_event_t    procTaskQueue[procTaskQueueLen];
 
-const int devid = 1;
+const int devid = 28;
 
 /*==============================================================================
  * Variables
@@ -133,7 +133,6 @@ struct cnespsend
 	uint32_t op;
 	uint32_t param1;
 	uint32_t param2;
-	uint32_t param3;
 	uint8_t payload[12*3];
 }  __attribute__ ((aligned (1))) __attribute__((packed));
 
@@ -143,24 +142,40 @@ struct cnespsend
  */
 static void ICACHE_FLASH_ATTR timer100ms(void *arg)
 {
+	static int k;
+	k+=2;
+	if( k > 150 ) k = 0;
 	struct cnespsend thisesp;
 
 	memset( &thisesp, 0, sizeof(thisesp) );
 	thisesp.code = 0xbeefbeef;
 	thisesp.op = 3;
-	thisesp.param1 = 20;
-	thisesp.param2 = 2000;
-	thisesp.param3 = 50;
-	int i;
+	thisesp.param1 = 60;
+	thisesp.param2 = 550;
+	thisesp.payload[0] = k;  //override
+	thisesp.payload[1] = 160;
+	thisesp.payload[2] = 0;
+	thisesp.payload[3] = 175;
+	thisesp.payload[4] = 100;
+
+			//P1 is the offset
+			//P2 is the multiplier
+			//payload[0] = is the override if op is 4
+			//payload[1] = max hue
+			//payload[2] = flip hue (if true)
+			//payload[3] = hue offset
+			//payload[4] = bright mux
+
+/*	int i;
 	for( i = 0; i < 12; i++ )
 	{
 		uint32_t color = EHSVtoHEX( i*20, 255, 255 );
 		thisesp.payload[i*3+0] = color>>8;
 		thisesp.payload[i*3+1] = color;
 		thisesp.payload[i*3+2] = color>>16;
-	}
+	}*/
 
-	espNowSend( &thisesp, sizeof(thisesp) );
+	//espNowSend( &thisesp, sizeof(thisesp) );
 	CSTick( 1 ); // Send a one to uart
 }
 
@@ -209,6 +224,9 @@ void ICACHE_FLASH_ATTR espNowRecvCb(uint8_t* mac_addr, uint8_t* data, uint8_t le
 {
     // Buried in a header, goes from 1 (far away) to 91 (practically touching)
     uint8_t rssi = data[-51];
+	static uint8_t lastrssi;
+	uint8_t totalrssi = rssi + lastrssi;
+	lastrssi = rssi;
 
 	struct cnespsend * d = (struct cnespsend*)data;
 
@@ -230,31 +248,37 @@ void ICACHE_FLASH_ATTR espNowRecvCb(uint8_t* mac_addr, uint8_t* data, uint8_t le
 	case 3:
 	case 4:
 		{
-			int r = (d->op==3)?rssi:d->param3;
+			int r = (d->op==3)?totalrssi:d->payload[0];
 			int p1 = d->param1;
 			int p2 = d->param2;
 
-			if( p2 == 0 ) { printf( "NO P2\n" ); return; }
 
+			if( p2 == 0 ) { printf( "NO P2\n" ); return; }
 			int m = ((r - p1) * p2)>>8;
 
 			int hue = m;
 			if( hue < 0 ) hue = 0;
-			if( hue > 140 ) hue = 140;
+			if( hue > d->payload[1] ) hue = d->payload[1];
+			if( d->payload[2] )
+			{
+				hue = d->payload[1] - 1 - hue;
+			}
+			hue += d->payload[3];
 
-			int sat = ( 140+128 - m ) * 2;
+			int sat = ( 64 + d->payload[1] - m ) * 4;
 			if( sat < 0 ) sat = 0;
 			if( sat > 255 ) sat = 255;
-			int val = (m + 128) * 2;
-			if( val < 0 ) val = 0;
+
+			int val = (m + 64) * 4;
+			if( val < 10 ) val = 10;
 			if( val > 255 ) val = 255;
 			uint32_t color = EHSVtoHEX( hue, sat, val );
 			int i;
 			for( i = 0; i < 12; i++ )
 			{
-				lbuf[i*3+0] = color>>8;
-				lbuf[i*3+1] = color;
-				lbuf[i*3+2] = color>>16;
+				lbuf[i*3+0] = (((color>>8)&0xff) * d->payload[4])>>8;
+				lbuf[i*3+1] = (((color)&0xff) * d->payload[4])>>8;
+				lbuf[i*3+2] = (((color>>16)&0xff) * d->payload[4])>>8;
 			}
 			ws2812_push( lbuf, 12*3 );
 		}
