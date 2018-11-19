@@ -150,8 +150,8 @@ static void ICACHE_FLASH_ATTR timer100ms(void *arg)
 	memset( &thisesp, 0, sizeof(thisesp) );
 	thisesp.code = 0xbeefbeef;
 	thisesp.op = 3;
-	thisesp.param1 = 60;
-	thisesp.param2 = 550;
+	thisesp.param1 = 66;
+	thisesp.param2 = 900;
 	thisesp.payload[0] = k;  //override
 	thisesp.payload[1] = 160;
 	thisesp.payload[2] = 0;
@@ -175,7 +175,7 @@ static void ICACHE_FLASH_ATTR timer100ms(void *arg)
 		thisesp.payload[i*3+2] = color>>16;
 	}*/
 
-	//espNowSend( &thisesp, sizeof(thisesp) );
+	espNowSend( &thisesp, sizeof(thisesp) );
 	CSTick( 1 ); // Send a one to uart
 }
 
