@@ -18,6 +18,7 @@
 #include "ws2812_i2s.h"
 #include <mdns.h>
 #include <string.h>
+#include "nosdk8266.h"
 
 /*==============================================================================
  * Process Defines
@@ -41,76 +42,6 @@ usr_conf_t * UsrCfg = (usr_conf_t*)(SETTINGS.UserData);
  * Functions
  *============================================================================*/
 
-uint32_t EHSVtoHEX( uint8_t hue, uint8_t sat, uint8_t val )
-{
-	#define SIXTH1 43
-	#define SIXTH2 85
-	#define SIXTH3 128
-	#define SIXTH4 171
-	#define SIXTH5 213
-
-	uint16_t or = 0, og = 0, ob = 0;
-
-	hue -= SIXTH1; //Off by 60 degrees.
-
-	//TODO: There are colors that overlap here, consider 
-	//tweaking this to make the best use of the colorspace.
-
-	if( hue < SIXTH1 ) //Ok: Yellow->Red.
-	{
-		or = 255;
-		og = 255 - ((uint16_t)hue * 255) / (SIXTH1);
-	}
-	else if( hue < SIXTH2 ) //Ok: Red->Purple
-	{
-		or = 255;
-		ob = (uint16_t)hue*255 / SIXTH1 - 255;
-	}
-	else if( hue < SIXTH3 )  //Ok: Purple->Blue
-	{
-		ob = 255;
-		or = ((SIXTH3-hue) * 255) / (SIXTH1);
-	}
-	else if( hue < SIXTH4 ) //Ok: Blue->Cyan
-	{
-		ob = 255;
-		og = (hue - SIXTH3)*255 / SIXTH1;
-	}
-	else if( hue < SIXTH5 ) //Ok: Cyan->Green.
-	{
-		og = 255;
-		ob = ((SIXTH5-hue)*255) / SIXTH1;
-	}
-	else //Green->Yellow
-	{
-		og = 255;
-		or = (hue - SIXTH5) * 255 / SIXTH1;
-	}
-
-	uint16_t rv = val;
-	if( rv > 128 ) rv++;
-	uint16_t rs = sat;
-	if( rs > 128 ) rs++;
-
-	//or, og, ob range from 0...255 now.
-	//Need to apply saturation and value.
-
-	or = (or * val)>>8;
-	og = (og * val)>>8;
-	ob = (ob * val)>>8;
-
-	//OR..OB == 0..65025
-	or = or * rs + 255 * (256-rs);
-	og = og * rs + 255 * (256-rs);
-	ob = ob * rs + 255 * (256-rs);
-//printf( "__%d %d %d =-> %d\n", or, og, ob, rs );
-
-	or >>= 8;
-	og >>= 8;
-	ob >>= 8;
-
-	return or | (og<<8) | ((uint32_t)ob<<16);
-}
 
 
 /**
@@ -142,13 +73,51 @@ struct cnespsend
  */
 static void ICACHE_FLASH_ATTR timer100ms(void *arg)
 {
+static int lcode;
 	static int k;
 	k+=2;
 	if( k > 150 ) k = 0;
 	struct cnespsend thisesp;
 
+		static int mode = 0;
+//#ifdef DOXMIT
+
+	if( lcode == 0 || lcode == 1  || lcode == 2)
+	{
+		mode = 0;
+		pico_i2c_writereg(103,4,1,0x88);	
+		pico_i2c_writereg(103,4,2,0x91);	
+
+	}
+	if( lcode == 2048 || lcode == 2049 || lcode == 2050 )
+	{
+		pico_i2c_writereg(103,4,1,0x88);
+		pico_i2c_writereg(103,4,2,0xf1);
+		mode = 1;
+	}
+
+	if( lcode == 4096 || lcode == 4097 || lcode == 4098 )
+	{
+		pico_i2c_writereg(103,4,1,0x48);
+		pico_i2c_writereg(103,4,2,0xf1);	
+		mode = 2;
+	}
+
+	if( lcode == 2049 + 4096 ) lcode = 0;
+
+	switch( mode )
+	{
+	case 0:			GPIO_OUTPUT_SET(GPIO_ID_PIN(2), 0 ); break;
+	case 1:			GPIO_OUTPUT_SET(GPIO_ID_PIN(2), 1 ); break;
+	case 2:			GPIO_OUTPUT_SET(GPIO_ID_PIN(2), (lcode & 64)?1:0);
+
+	}
+//#endif
+
+//			GPIO_OUTPUT_SET(GPIO_ID_PIN(2), (lcode & 1024)?1:0 );
+
 	memset( &thisesp, 0, sizeof(thisesp) );
-	thisesp.code = 0xbeefbeef;
+	thisesp.code = lcode++;
 	thisesp.op = 3;
 	thisesp.param1 = 66;
 	thisesp.param2 = 900;
@@ -175,7 +144,10 @@ static void ICACHE_FLASH_ATTR timer100ms(void *arg)
 		thisesp.payload[i*3+2] = color>>16;
 	}*/
 
-	espNowSend( &thisesp, sizeof(thisesp) );
+	uint8_t data[300];
+#ifdef DOXMIT
+	espNowSend( data, 300 );
+#endif
 	CSTick( 1 ); // Send a one to uart
 }
 
@@ -228,6 +200,10 @@ void ICACHE_FLASH_ATTR espNowRecvCb(uint8_t* mac_addr, uint8_t* data, uint8_t le
 	uint8_t totalrssi = rssi + lastrssi;
 	lastrssi = rssi;
 
+
+	printf( "%d  %d\n", rssi, data[0] );
+
+#if 0
 	struct cnespsend * d = (struct cnespsend*)data;
 
 
@@ -284,6 +260,7 @@ void ICACHE_FLASH_ATTR espNowRecvCb(uint8_t* mac_addr, uint8_t* data, uint8_t le
 		}
 		break;
 	}
+#endif
 
 #if 0
     // Debug print the received payload
@@ -322,7 +299,7 @@ void ICACHE_FLASH_ATTR espNowSend(const uint8_t* data, uint8_t len)
 	static const uint8_t espNowBroadcastMac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
     // Call this before each transmission to set the wifi speed
-    wifi_set_user_fixed_rate(FIXED_RATE_MASK_ALL, 3); //3 = 11mbit/s B
+    wifi_set_user_fixed_rate(FIXED_RATE_MASK_ALL, 11); //3 = 11mbit/s B
 
     // Send a packet
    	esp_now_send((uint8_t*)espNowBroadcastMac, (uint8_t*)data, len);
@@ -448,7 +425,7 @@ void ICACHE_FLASH_ATTR user_init(void)
 	struct softap_config sap;
 	memset( &sap, 0, sizeof( sap ) );
 	sap.ssid_len = 0;
-	sap.channel = 1;
+	sap.channel = 6;
 	sap.authmode = 0;
 	sap.ssid_hidden = 1;
 	sap.beacon_interval = 60000;
@@ -461,7 +438,28 @@ void ICACHE_FLASH_ATTR user_init(void)
 	// Set timer100ms to be called every 100ms
 	os_timer_disarm(&some_timer);
 	os_timer_setfn(&some_timer, (os_timer_func_t *)timer100ms, NULL);
-	os_timer_arm(&some_timer, 20, 1);
+	os_timer_arm(&some_timer, 1, 1);
+
+//This is actually 0x88.  You can set this to 0xC8 to double-overclock the low-end bus.
+	//This can get you to a 160 MHz peripheral bus if setting it normally to 80 MHz.
+#if PERIPH_FREQ == 160
+//	pico_i2c_writereg(103,4,1,0xc8);
+#else
+//	pico_i2c_writereg(103,4,1,0x88);
+#endif
+
+	//@80, 20*32 ms = 640 * 2 = 1.280  BASE: 102.4
+	//Now, 1.45 == 102.4/1.45 = ~70 MHz
+	//5.09 s => 20 MHz	pico_i2c_writereg(103,4,1,0x08);	pico_i2c_writereg(103,4,2,0x91);		
+	//40 MHz	pico_i2c_writereg(103,4,1,0x48);	pico_i2c_writereg(103,4,2,0x91);		
+	//40 MHz	pico_i2c_writereg(103,4,1,0x48);	pico_i2c_writereg(103,4,2,0x91);		
+	//pico_i2c_writereg(103,4,1,0x48);	pico_i2c_writereg(103,4,2,0x91);		
+
+//	pico_i2c_writereg(103,4,1,0x88);	pico_i2c_writereg(103,4,2,0x91);		
+
+		pico_i2c_writereg(103,4,1,0x48);
+		pico_i2c_writereg(103,4,2,0xf1);	
+
 
 	os_printf( "Boot Ok.\n" );
 
