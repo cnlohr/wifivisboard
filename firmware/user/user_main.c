@@ -27,7 +27,8 @@
 #define procTaskQueueLen    1
 os_event_t    procTaskQueue[procTaskQueueLen];
 
-const int devid = 28;
+const int devid = 25;
+int DOXMIT = 0;
 
 /*==============================================================================
  * Variables
@@ -175,7 +176,8 @@ static void ICACHE_FLASH_ATTR timer100ms(void *arg)
 		thisesp.payload[i*3+2] = color>>16;
 	}*/
 
-	espNowSend( &thisesp, sizeof(thisesp) );
+	if( DOXMIT )
+		espNowSend( &thisesp, sizeof(thisesp) );
 	CSTick( 1 ); // Send a one to uart
 }
 
@@ -421,6 +423,12 @@ void ICACHE_FLASH_ATTR user_init(void)
 	CSSettingsLoad( 0 );
 	CSPreInit();
 
+	MakePinGPIO( 0 );
+	MakePinGPIO( 2 );
+	MakePinGPIO( 13 );
+	PIN_DIR_INPUT = (1<<2) | (1<<0) | (1<<13);
+	PIN_PULLUP_EN( PERIPHS_IO_MUX_MTCK_U ); //GPIO13
+
 	ws2812_init();
 
 	// Initialize common settings
@@ -464,6 +472,11 @@ void ICACHE_FLASH_ATTR user_init(void)
 	os_timer_arm(&some_timer, 20, 1);
 
 	os_printf( "Boot Ok.\n" );
+
+	if( !(PIN_IN & (1<<13)) )
+	{
+		DOXMIT = 1;
+	}
 
 	espNowInit();
 
