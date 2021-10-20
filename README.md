@@ -1,5 +1,7 @@
 # wifivisboard
 
+THIS REPO CONTAINS A REFERENCE IMPLEMENTATION FOR ESP-NOW ON THE ESP8266.  Also, previously "esp-freedom"
+
 A project for a minimal reference swadge implemnetation.  
 
 Specifically, this is being made for use with a sermonette for my youth group, to allow for "seeing" wifi. 
